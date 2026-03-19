@@ -1,17 +1,23 @@
-# Proxmox LXC & VM Auto Maintenance Toolkit
+# Proxmox LXC, VM & PBS Maintenance Toolkit
 
 ## Overview
 
-This repository provides a set of production-ready Bash scripts designed to automate maintenance tasks on a Proxmox VE host. The toolkit focuses on:
+This repository provides a set of **production-ready Bash scripts** to automate maintenance on a Proxmox VE host.
 
-- Automated package updates for LXC containers and QEMU virtual machines
-- Update visibility and reporting
-- Backup verification
-- Operational safety (timeouts, lock detection, disk checks)
-- Centralized logging
+The toolkit focuses on:
+
+- Automated updates for LXC containers and QEMU VMs
+- Multi-distro support
+- Backup verification via Proxmox Backup Server (PBS)
+- Clear reporting and observability
+- Safe execution with built-in safeguards
 - Push notifications via ntfy
 
-The scripts are designed to be **safe, sequential, and observable**, making them suitable for homelab and small production environments.
+The scripts are designed to be:
+
+- **Safe** (pre-checks, locks, timeouts)
+- **Transparent** (structured reporting + verbose mode)
+- **Automation-friendly** (no manual interaction required)
 
 ---
 
@@ -19,66 +25,118 @@ The scripts are designed to be **safe, sequential, and observable**, making them
 
 ### Update Automation
 
-- Sequential updates (no parallel execution)
+- Sequential updates (safe, no parallel conflicts)
+
 - Supports:
   - LXC containers via `pct exec`
-  - QEMU VMs via `qm guest exec` (requires QEMU Guest Agent)
+  - QEMU VMs via `qm guest exec` (requires guest agent)
 
-- Debian/Ubuntu detection
-- Package upgrade counting
-- Per-container/VM execution time tracking
+- Multi-distro support:
+  - Debian / Ubuntu
+  - Alpine
+  - Arch Linux (LXC)
+
+- Detects:
+  - Available updates
+  - Execution duration
+  - Reboot requirement
+
+- Explicit reporting:
+  - Updated systems
+  - Systems with **no updates**
+  - Skipped systems (with reason)
+
+---
+
+### Verbose Mode
+
+Run scripts with:
+
+```bash
+./weekly-lxc-vm-update.sh --verbose
+```
+
+Provides structured, contextual output:
+
+```bash
+[LXC 101 - nginx]
+  Distro: ubuntu
+  Disk free: 1200MB
+  Updates found: 5
+  Upgrading...
+  Reboot triggered
+```
+
+Default mode remains clean and minimal (ntfy-friendly).
+
+---
 
 ### Safety Mechanisms
 
 - APT lock detection (`/var/lib/dpkg/lock-frontend`)
 - Disk space validation before upgrade
-- Execution timeout protection (default: 600 seconds)
+- Execution timeout protection
 - Offline system detection
-- Graceful failure handling
+- Graceful skip handling with reason reporting
+
+---
 
 ### Reboot Handling
 
 - Detects `/var/run/reboot-required`
-- Automatically reboots LXC containers and VMs when needed
-- Tracks rebooted systems in reports
+- Automatically reboots:
+  - LXC containers
+  - VMs (via guest agent)
+
+- Reboots are tracked and reported
+
+---
+
+### 📊 Reporting
+
+Structured Markdown reports including:
+
+- Updated systems
+- No updates needed
+- Rebooted systems
+- Skipped systems (with reasons)
+- Offline systems
+
+Delivered via ntfy push notifications.
+
+---
+
+### Backup Monitoring (PBS)
+
+- Connects directly to Proxmox Backup Server
+- Auto-detects namespaces
+- Lists **all backups per namespace** (no merging)
+- Reports:
+  - Backup age
+  - Missing backups
+  - Namespace location
+
+---
 
 ### Logging
 
-- Persistent log file:
+Persistent log file:
 
-  ```
-  /var/log/lxc-updater.log
-  ```
+```bash
+/var/log/lxc-updater.log
+```
 
-- Timestamped entries for all operations
-
-### Reporting
-
-- Structured Markdown reports
-- Includes:
-  - Updated systems
-  - Rebooted systems
-  - Failures
-  - Offline systems
-  - Package details (LXC)
-
-- Delivered via ntfy push notifications
-
-### Backup Monitoring
-
-- Parses Proxmox task history
-- Detects success/failure of vzdump jobs
-- Provides summarized backup status
+Includes timestamps and execution details for all operations.
 
 ---
 
 ## Repository Structure
 
-```
+```bash
 .
-├── weekly-lxc-vm-update.sh   # Main maintenance script
-├── lxc-update-check.sh       # Daily update availability check
-├── pbs-backup-check.sh       # Backup verification script
+├── weekly-lxc-vm-update.sh   # Full update automation (LXC + VM)
+├── lxc-update-check.sh       # Lightweight update availability check
+├── pbs-backup-check.sh       # PBS backup validation (namespace-aware)
 └── README.md
 ```
 
@@ -86,37 +144,30 @@ The scripts are designed to be **safe, sequential, and observable**, making them
 
 ## Requirements
 
-- Proxmox VE host (tested on PVE 7/8)
+- Proxmox VE (tested on PVE 7/8)
 - Root privileges
-- `curl` installed
-- `jq` installed (required for backup script)
-- Network access from host to containers/VMs
-- QEMU Guest Agent installed inside VMs:
+- `curl`
+- `jq` (required for PBS script)
+- QEMU Guest Agent inside VMs:
 
-  ```
-  apt install qemu-guest-agent
-  systemctl enable --now qemu-guest-agent
-  ```
+```bash
+apt install qemu-guest-agent
+systemctl enable --now qemu-guest-agent
+```
 
 ---
 
 ## Installation
 
-1. Clone repository:
-
 ```bash
 git clone https://github.com/yourusername/proxmox-auto-maintenance.git
 cd proxmox-auto-maintenance
-```
 
-2. Copy scripts to your Proxmox host:
-
-```bash
 cp *.sh /usr/local/bin/
 chmod +x /usr/local/bin/*.sh
 ```
 
-3. Ensure log file exists:
+Create log file:
 
 ```bash
 touch /var/log/lxc-updater.log
@@ -127,73 +178,64 @@ chmod 644 /var/log/lxc-updater.log
 
 ## Configuration
 
-Each script contains the following configurable variables:
+Edit variables inside scripts:
 
 ```bash
 NTFY_SERVER="https://ntfy.sh"
 NTFY_TOPIC="YOUR_TOPIC"
+
 APT_TIMEOUT=600
 MIN_DISK_MB=500
 ```
 
-Adjust these values according to your environment.
+### PBS Script Configuration
+
+```bash
+PBS_REPO="root@pam@IP:datastore"
+PBS_PASSWORD_FILE="/root/.pbs_pass"
+```
+
+Password file:
+
+```bash
+echo "your-password" > /root/.pbs_pass
+chmod 600 /root/.pbs_pass
+```
 
 ---
 
-## ntfy Configuration (Required for Notifications)
+## ntfy Configuration
 
-Notifications are delivered using ntfy. To receive them on your mobile device, you must ensure your ntfy endpoint is **publicly accessible**.
+Notifications require a **public ntfy endpoint**.
+Learn more at [ntfy.sh](https://ntfy.sh).
 
-### Public Access Requirement
+Each script includes:
 
-If you are self-hosting ntfy, your server must be reachable from the internet.
+NTFY_SERVER="<https://your.ntfy.domain>"
+NTFY_TOPIC="YOUR_TOPIC"
 
-Common solutions:
+NTFY_SERVER can be the public ntfy service or your own self-hosted instance
+NTFY_TOPIC is the channel you subscribe to (e.g. proxmox-home)
 
-- Cloudflare Tunnel (cloudflared)
-- Reverse proxy with HTTPS (Nginx, Traefik)
-- Port forwarding (not recommended without proper security)
+Options:
 
-Example using cloudflared:
+- Cloudflare Tunnel (recommended)
+- Reverse proxy (Nginx / Traefik)
+- Port forwarding (less secure)
+
+Example:
 
 ```bash
 cloudflared tunnel --url http://localhost:80
 ```
 
-Then use the generated public URL as your `NTFY_SERVER`.
-
 ---
 
-## Mobile App Setup
+## Mobile Setup
 
-Install the ntfy app:
-
-- Android: Google Play Store
-- iOS: App Store
-
-Steps:
-
-1. Open the ntfy app
-2. Subscribe to your topic (e.g. `my-proxmox`)
+1. Install ntfy app (iOS / Android)
+2. Subscribe to your topic
 3. Enable notifications
-
-Once configured, all script executions will push structured reports directly to your device.
-
----
-
-## Markdown Rendering
-
-All notifications are sent with:
-
-```
-Header: Markdown: yes
-```
-
-This ensures consistent formatting across:
-
-- iOS
-- Android
-- Web interface
 
 ---
 
@@ -201,101 +243,87 @@ This ensures consistent formatting across:
 
 ### 1. weekly-lxc-vm-update.sh
 
-Performs full maintenance cycle:
+Full maintenance script:
 
-- Updates all running LXC containers
-- Updates all running VMs with QEMU agent
-- Detects failures and offline systems
-- Detects and performs reboots when required
-- Logs all operations
-- Sends Markdown report via ntfy
+- Updates all LXC containers
+- Updates all VMs (with guest agent)
+- Handles:
+  - multi-distro updates
+  - reboot detection
+  - failures and skips
 
-#### Manual Execution
+- Sends ntfy report
+
+#### Run
 
 ```bash
-/usr/local/bin/weekly-lxc-vm-update.sh
+./weekly-lxc-vm-update.sh
+./weekly-lxc-vm-update.sh --verbose
 ```
 
 ---
 
 ### 2. lxc-update-check.sh
 
-Lightweight status script:
+Lightweight script:
 
-- Runs `apt update` only
-- Reports number of available upgrades
-- Detects offline containers
-- Sends summary notification
-
-#### Manual Execution
-
-```bash
-/usr/local/bin/lxc-update-check.sh
-```
+- Checks update availability
+- No upgrades performed
+- Quick overview of system state
 
 ---
 
 ### 3. pbs-backup-check.sh
 
-Backup verification script:
+Backup verification:
 
-- Parses Proxmox vzdump task history
-- Reports success and failure states
-- Useful for confirming PBS backup health
-
-#### Manual Execution
-
-```bash
-/usr/local/bin/pbs-backup-check.sh
-```
+- Detects namespaces automatically
+- Lists all backups per namespace
+- Reports missing or outdated backups
 
 ---
 
-## Scheduling with cron
-
-Once the scripts are installed on your Proxmox host, configure scheduled execution using cron.
-
-Edit root crontab:
+## Scheduling (cron)
 
 ```bash
 crontab -e
 ```
 
-### Recommended Default Schedule
+Recommended:
 
 ```cron
-# Weekly updates (Saturday 06:00)
+# Weekly updates
 0 6 * * 6 /usr/local/bin/weekly-lxc-vm-update.sh
 
-# Daily update check (18:00)
+# Daily update check
 0 18 * * * /usr/local/bin/lxc-update-check.sh
 
-# Backup verification (07:30)
+# Backup check
 30 7 * * * /usr/local/bin/pbs-backup-check.sh
 ```
 
-These schedules are conservative and designed to avoid peak usage hours.
-
 ---
 
-## Example Notification (Markdown)
+## Example Notification
 
-```
+```bash
 ## Proxmox Weekly Updates
-Host: pve01
-Time: 2026-03-07
+Host: proxmox2
+Time: 2026-03-19
 
-### Updated
-- LXC 101 (pihole) → 3 packages (14s)
-- VM 105 (docker) updated (35s)
+Updated
+- LXC 101 (nginx) → 5 updates (8s)
 
-### Rebooted
-- LXC 101 (pihole)
+No Updates
+- LXC 102 (db) no updates
 
-### Failed
-- LXC 108 (media) apt locked
+Rebooted
+- LXC 101 (nginx)
 
-### Offline
+Skipped
+- LXC 103 (api) apt locked
+
+Offline
 - VM 110 (test)
 ```
 
@@ -303,32 +331,30 @@ Time: 2026-03-07
 
 ## Operational Notes
 
-- Scripts run sequentially to avoid APT conflicts
-- Disk threshold prevents upgrade failures
-- Timeout prevents hanging package operations
-- VM updates depend on QEMU Guest Agent
-- Backup script reads Proxmox task logs, not PBS datastore directly
+- Scripts run sequentially (safe for APT)
+- No user interaction required
+- Reboots are automatic
+- VM updates require guest agent
+- PBS script does **not merge namespaces**
 
 ---
 
 ## Limitations
 
-- Only Debian-based systems are supported
-- No rollback or snapshot integration
-- Backup validation is task-based
+- VM updates currently support Debian/Ubuntu
+- No snapshot/rollback integration
 - No cluster-wide coordination
+- Sequential execution (no parallelism yet)
 
 ---
 
 ## Future Improvements
 
-Potential enhancements:
-
-- Pre-update snapshots
-- Automatic rollback
-- Multi-node cluster support
-- Tag-based update selection
-- Integration with monitoring systems
+- Parallel execution
+- Snapshot integration before updates
+- Retry logic for failed systems
+- Namespace comparison for PBS
+- Dashboard-style output
 
 ---
 
@@ -340,5 +366,6 @@ MIT License
 
 ## Disclaimer
 
-These scripts perform system updates and reboots. Test in a controlled environment before production use.
-These scripts perform system updates and reboots. Test in a controlled environment before production use.
+These scripts perform system updates and automatic reboots.
+
+**Test in a controlled environment before production use.**

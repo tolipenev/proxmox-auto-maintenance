@@ -1,18 +1,18 @@
 #!/bin/bash
 
-
-# LXC Update Check
-
-
+# NTFY CONFIG
 NTFY_SERVER="https://ntfy.sh"
 NTFY_TOPIC="YOUR_TOPIC"
 ENABLE_NTFY=true
 
+# SETTINGS
+HIGH_UPDATE_THRESHOLD=0
+
+# INIT
 HOST=$(hostname)
 DATE=$(date "+%Y-%m-%d %H:%M")
 
-# Threshold for highlighting
-HIGH_UPDATE_THRESHOLD=0
+TOTAL_UPDATES=0
 
 # Colors
 GREEN="\e[32m"
@@ -21,16 +21,15 @@ YELLOW="\e[33m"
 CYAN="\e[36m"
 RESET="\e[0m"
 
-REPORT="## Proxmox Update Status
-**Host:** $HOST
-**Time:** $DATE
+echo "=== LXC Update Check ==="
 
-"
+# REPORT INIT
+REPORT="## Proxmox LXC Update Status"$'\n'
+REPORT+="Host: $HOST"$'\n'
+REPORT+="Time: $DATE"$'\n\n'
 
-TOTAL_UPDATES=0
-
-for CTID in $(pct list | awk 'NR>1 {print $1}')
-do
+# CHECK CONTAINERS
+for CTID in $(pct list | awk 'NR>1 {print $1}'); do
     START=$(date +%s)
 
     NAME=$(pct config "$CTID" | awk '/hostname/ {print $2}')
@@ -38,15 +37,24 @@ do
 
     echo -e "${CYAN}[$CTID] $NAME${RESET}"
 
+
+    # OFFLINE CHECK
+
     if [[ "$STATUS" != "running" ]]; then
         echo -e "  ${RED}OFFLINE${RESET}"
         REPORT+="- $CTID ($NAME) OFFLINE"$'\n'
         continue
     fi
 
+
+    # DETECT DISTRO
+
     DISTRO=$(pct exec "$CTID" -- sh -c "grep '^ID=' /etc/os-release 2>/dev/null | cut -d= -f2")
 
     COUNT=0
+
+
+    # UPDATE CHECK PER DISTRO
 
     case "$DISTRO" in
         debian|ubuntu)
@@ -81,7 +89,9 @@ do
 
     TOTAL_UPDATES=$((TOTAL_UPDATES + COUNT))
 
-    # Highlight logic
+
+    # RESULT HANDLING
+
     if [[ "$COUNT" -ge "$HIGH_UPDATE_THRESHOLD" ]]; then
         echo -e "  ${YELLOW}$COUNT updates (${DURATION}s) [HIGH]${RESET}"
         REPORT+="- $CTID ($NAME) → **$COUNT updates** (${DURATION}s) ⚠"$'\n'
@@ -92,18 +102,21 @@ do
 
 done
 
-REPORT+=$'\n'"**Total pending updates:** $TOTAL_UPDATES"$'\n'
+# SUMMARY
+REPORT+=$'\n'"Summary"$'\n'
+REPORT+="- Total pending updates: $TOTAL_UPDATES"$'\n'
 
-# SEND NOTIFICATION
-
+# NTFY PUSH
 if [[ "$ENABLE_NTFY" == true ]]; then
     curl -s \
-      -H "Markdown: yes" \
-      -H "Title: Proxmox Update Check" \
-      -d "$REPORT" \
-      "$NTFY_SERVER/$NTFY_TOPIC" > /dev/null
+        -H "Markdown: yes" \
+        -H "Title: Proxmox LXC Update Report" \
+        -d "$REPORT" \
+        "$NTFY_SERVER/$NTFY_TOPIC" > /dev/null
 
     echo -e "\n${GREEN}ntfy notification sent${RESET}"
 else
     echo -e "\n${YELLOW}ntfy disabled (ENABLE_NTFY=false)${RESET}"
 fi
+
+echo "=== Done ==="
