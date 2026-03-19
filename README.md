@@ -92,7 +92,7 @@ Default mode remains clean and minimal (ntfy-friendly).
 
 ---
 
-### 📊 Reporting
+### Reporting
 
 Structured Markdown reports including:
 
@@ -208,11 +208,6 @@ chmod 600 /root/.pbs_pass
 
 Notifications require a **public ntfy endpoint**.
 Learn more at [ntfy.sh](https://ntfy.sh).
-
-Each script includes:
-
-NTFY_SERVER="<https://your.ntfy.domain>"
-NTFY_TOPIC="YOUR_TOPIC"
 
 NTFY_SERVER can be the public ntfy service or your own self-hosted instance
 NTFY_TOPIC is the channel you subscribe to (e.g. proxmox-home)
