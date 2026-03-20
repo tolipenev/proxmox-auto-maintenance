@@ -1,8 +1,6 @@
-
 #!/bin/bash
 
 # PROXMOX WEEKLY UPDATE SCRIPT
-
 
 # CONFIG
 
