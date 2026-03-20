@@ -1,6 +1,4 @@
-```bash
 #!/bin/bash
-
 
 # NTFY CONFIG
 
@@ -142,4 +140,3 @@ fi
 
 echo "$REPORT"
 echo "=== Done ==="
-```
