@@ -1,34 +1,32 @@
 #!/bin/bash
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-# NTFY CONFIG
+LOCKFILE="/var/run/pbs-health-check.lock"
+exec 200>$LOCKFILE
+flock -n 200 || exit 0
+
+# ---------------- CONFIG ----------------
 
 NTFY_SERVER="https://ntfy.sh"
 NTFY_TOPIC="YOUR_TOPIC"
 ENABLE_NTFY=true
 
-
-# PBS CONFIG
-
 PBS_REPO="root@pam@IP:prox-backups"
 PBS_PASSWORD_FILE="/root/.pbs_pass"
-
-export PBS_REPOSITORY="$PBS_REPO"
-export PBS_PASSWORD_FILE="$PBS_PASSWORD_FILE"
-
-
-# VALIDATION
-
-[[ -z "$PBS_REPOSITORY" ]] && { echo "ERROR: PBS_REPOSITORY empty"; exit 1; }
-[[ ! -f "$PBS_PASSWORD_FILE" ]] && { echo "ERROR: PBS password file missing"; exit 1; }
-
-
-# SETTINGS
 
 MAX_AGE_HOURS=24
 MAX_AGE=$((MAX_AGE_HOURS * 3600))
 
+DATASTORE_WARN=80
+DATASTORE_CRIT=90
 
-# INIT
+DISK_WARN=80
+DISK_CRIT=90
+
+# ---------------- INIT ----------------
+
+export PBS_REPOSITORY="$PBS_REPO"
+export PBS_PASSWORD_FILE="$PBS_PASSWORD_FILE"
 
 HOST=$(hostname)
 DATE=$(date "+%Y-%m-%d %H:%M")
@@ -36,107 +34,138 @@ NOW=$(date +%s)
 
 declare -A LAST_BACKUP
 
-echo "=== PBS Backup Check ==="
-
-
-# DISCOVER NAMESPACES
-
-echo "Discovering namespaces..."
-
-PBS_NAMESPACES=()
-
-NAMESPACE_RAW=$(proxmox-backup-client namespace list 2>&1)
-
-if [[ $? -ne 0 ]]; then
-    echo "ERROR: namespace list failed:"
-    echo "$NAMESPACE_RAW"
-    exit 1
-fi
-
-while read -r ns; do
-    [[ -n "$ns" ]] && PBS_NAMESPACES+=("$ns")
-done <<< "$NAMESPACE_RAW"
-
-[[ ${#PBS_NAMESPACES[@]} -eq 0 ]] && PBS_NAMESPACES=("")
-
-echo "Found namespaces: ${PBS_NAMESPACES[*]}"
-
-
-# FETCH SNAPSHOTS
-
-fetch_snapshots() {
-    local NS="$1"
-
-    if [[ -n "$NS" ]]; then
-        echo "Checking namespace: $NS"
-        SNAP_JSON=$(proxmox-backup-client snapshot list --ns "$NS" --output-format json 2>/dev/null)
-    else
-        echo "Checking root namespace"
-        SNAP_JSON=$(proxmox-backup-client snapshot list --output-format json 2>/dev/null)
-    fi
-
-    [[ -z "$SNAP_JSON" ]] && return
-
-    while read -r snap; do
-        VMID=$(echo "$snap" | jq -r '."backup-id"')
-        TS=$(echo "$snap" | jq -r '."backup-time"')
-
-        [[ "$VMID" == "null" || "$TS" == "null" ]] && continue
-
-        KEY="${NS}:${VMID}"
-
-        if [[ -z "${LAST_BACKUP[$KEY]}" || $((10#${LAST_BACKUP[$KEY]})) -lt $((10#$TS)) ]]; then
-            LAST_BACKUP[$KEY]=$TS
-        fi
-    done < <(echo "$SNAP_JSON" | jq -c '.[]')
-}
-
-# Run fetch
-for NS in "${PBS_NAMESPACES[@]}"; do
-    fetch_snapshots "$NS"
-done
-
-
-# REPORT
-
-REPORT="## Proxmox Backup Status"$'\n'
+REPORT="## PBS Health Report"$'\n'
 REPORT+="Host: $HOST"$'\n'
 REPORT+="Time: $DATE"$'\n\n'
 
-OK=0
-OLD=0
+# ---------------- BACKUP CHECK ----------------
 
-for KEY in "${!LAST_BACKUP[@]}"; do
-    NS="${KEY%%:*}"
-    ID="${KEY##*:}"
-    TS="${LAST_BACKUP[$KEY]}"
+REPORT+="Backups"$'\n'
 
-    AGE=$((NOW - 10#$TS))
-    HOURS=$((AGE / 3600))
+SNAP_JSON=$(timeout 30 proxmox-backup-client snapshot list --output-format json 2>/dev/null)
 
-    if [[ "$AGE" -gt "$MAX_AGE" ]]; then
-        REPORT+="- [$NS] $ID → OLD (${HOURS}h)"$'\n'
-        ((OLD++))
+if [[ -z "$SNAP_JSON" ]]; then
+    REPORT+="- FAILED: cannot read snapshots"$'\n'
+else
+    while read -r snap; do
+        ID=$(echo "$snap" | jq -r '."backup-id"')
+        TS=$(echo "$snap" | jq -r '."backup-time"')
+
+        [[ "$ID" == "null" ]] && continue
+
+        if [[ -z "${LAST_BACKUP[$ID]}" || ${LAST_BACKUP[$ID]} -lt $TS ]]; then
+            LAST_BACKUP[$ID]=$TS
+        fi
+
+    done < <(echo "$SNAP_JSON" | jq -c '.[]')
+
+    for ID in "${!LAST_BACKUP[@]}"; do
+        TS=${LAST_BACKUP[$ID]}
+        AGE=$((NOW - TS))
+        H=$((AGE/3600))
+
+        if [[ $AGE -gt $MAX_AGE ]]; then
+            REPORT+="- $ID OLD (${H}h)"$'\n'
+        else
+            REPORT+="- $ID OK (${H}h)"$'\n'
+        fi
+    done
+fi
+
+# ---------------- VERIFY CHECK ----------------
+
+REPORT+=$'\n'"Verify"$'\n'
+
+VERIFY=$(timeout 30 proxmox-backup-manager task list --type verify --output-format json 2>/dev/null)
+
+if [[ -z "$VERIFY" ]]; then
+    REPORT+="- no verify jobs found"$'\n'
+else
+    LAST_VERIFY=$(echo "$VERIFY" | jq -r '.[0].endtime // empty')
+
+    if [[ -n "$LAST_VERIFY" ]]; then
+        AGE=$((NOW - LAST_VERIFY))
+        H=$((AGE/3600))
+
+        if [[ $AGE -gt $MAX_AGE ]]; then
+            REPORT+="- verify OLD (${H}h)"$'\n'
+        else
+            REPORT+="- verify OK (${H}h)"$'\n'
+        fi
     else
-        REPORT+="- [$NS] $ID → OK (${HOURS}h)"$'\n'
-        ((OK++))
+        REPORT+="- verify never run"$'\n'
+    fi
+fi
+
+# ---------------- PRUNE CHECK ----------------
+
+REPORT+=$'\n'"Prune"$'\n'
+
+PRUNE=$(timeout 30 proxmox-backup-manager task list --type prune --output-format json 2>/dev/null)
+
+if [[ -z "$PRUNE" ]]; then
+    REPORT+="- no prune jobs found"$'\n'
+else
+    LAST_PRUNE=$(echo "$PRUNE" | jq -r '.[0].endtime // empty')
+
+    if [[ -n "$LAST_PRUNE" ]]; then
+        AGE=$((NOW - LAST_PRUNE))
+        H=$((AGE/3600))
+
+        if [[ $AGE -gt $MAX_AGE ]]; then
+            REPORT+="- prune OLD (${H}h)"$'\n'
+        else
+            REPORT+="- prune OK (${H}h)"$'\n'
+        fi
+    else
+        REPORT+="- prune never run"$'\n'
+    fi
+fi
+
+# ---------------- DATASTORE CHECK ----------------
+
+REPORT+=$'\n'"Datastore"$'\n'
+
+while read -r ds; do
+    NAME=$(echo "$ds" | jq -r '.name')
+    USED=$(echo "$ds" | jq -r '.used')
+    TOTAL=$(echo "$ds" | jq -r '.total')
+
+    [[ "$TOTAL" -eq 0 ]] && continue
+
+    PCT=$(( USED * 100 / TOTAL ))
+
+    if [[ $PCT -ge $DATASTORE_CRIT ]]; then
+        REPORT+="- $NAME CRITICAL ${PCT}%"$'\n'
+    elif [[ $PCT -ge $DATASTORE_WARN ]]; then
+        REPORT+="- $NAME WARN ${PCT}%"$'\n'
+    else
+        REPORT+="- $NAME OK ${PCT}%"$'\n'
+    fi
+
+done < <(echo "$DATASTORE" | jq -c '.[]')
+
+# ---------------- DISK CHECK ----------------
+
+REPORT+=$'\n'"PBS Disk"$'\n'
+
+PCT=$(df -h / | awk 'NR==2 {print $5}' | tr -d '%')
+
+    if [[ $PCT -ge $DISK_CRIT ]]; then
+        REPORT+="- disk CRITICAL ${PCT}%"$'\n'
+    elif [[ $PCT -ge $DISK_WARN ]]; then
+        REPORT+="- disk WARN ${PCT}%"$'\n'
+    else
+        REPORT+="- disk OK ${PCT}%"$'\n'
     fi
 done
 
-REPORT+=$'\n'"Summary"$'\n'
-REPORT+="- OK: $OK"$'\n'
-REPORT+="- Old: $OLD"$'\n'
+# ---------------- SEND ----------------
 
-
-# NTFY
-
-if [[ "$ENABLE_NTFY" == true ]]; then
-    curl -s \
-        -H "Markdown: yes" \
-        -H "Title: PBS Backup Report" \
-        -d "$REPORT" \
-        "$NTFY_SERVER/$NTFY_TOPIC" > /dev/null
-fi
+curl -s \
+  -H "Markdown: yes" \
+  -H "Title: PBS Health Report" \
+  -d "$REPORT" \
+  "$NTFY_SERVER/$NTFY_TOPIC" > /dev/null
 
 echo "$REPORT"
-echo "=== Done ==="

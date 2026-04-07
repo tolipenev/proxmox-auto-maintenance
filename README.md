@@ -1,5 +1,11 @@
 # Proxmox LXC, VM & PBS Maintenance Toolkit
 
+![Proxmox](https://img.shields.io/badge/Proxmox-VE-orange)
+![Bash](https://img.shields.io/badge/Shell-Bash-blue)
+![Linux](https://img.shields.io/badge/Platform-Linux-lightgrey)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Maintenance](https://img.shields.io/badge/Maintained-Yes-brightgreen)
+
 ## Overview
 
 This repository provides a set of **production-ready Bash scripts** to automate maintenance on a Proxmox VE host.
@@ -297,7 +303,7 @@ Recommended:
 30 7 * * * /usr/local/bin/pbs-backup-check.sh
 ```
 
----
+_Note: In case of multiple nodes, you need to run the scripts on all nodes and adjust the times with at least 15 minutes difference._
 
 ## Example Notification
 
