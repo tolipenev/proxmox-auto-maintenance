@@ -294,13 +294,13 @@ Recommended:
 
 ```cron
 # Weekly updates
-0 6 * * 6 /usr/local/bin/weekly-lxc-vm-update.sh
+0 18 * * 6 /usr/local/bin/weekly-lxc-vm-update.sh
 
-# Daily update check
-0 18 * * * /usr/local/bin/lxc-update-check.sh
+# Bi-daily update check
+0 9 * * 1,3,5 /usr/local/bin/lxc-update-check.sh
 
 # Backup check
-30 7 * * * /usr/local/bin/pbs-backup-check.sh
+30 22 * * 6 /usr/local/bin/pbs-backup-check.sh
 ```
 
 _Note: In case of multiple nodes, you need to run the scripts on all nodes and adjust the times with at least 15 minutes difference._
